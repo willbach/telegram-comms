@@ -10,21 +10,16 @@
       "WebSearch",
       "WebFetch(*)",
       "mcp__*",
+      "Bash(git:*)",
+      "Bash(gh:*)",
       "Bash(tree:*)",
-      "WebFetch(domain:iterm2.com)",
-      "WebFetch(domain:gitlab.com)",
-      "WebFetch(domain:github.com)",
-      "WebFetch(domain:apidog.com)",
       "Bash(claude:*)",
       "Bash(pip install:*)",
       "Bash(pip3 install:*)",
       "Bash(python3:*)",
-      "Bash(curl -s \"https://api.telegram.org/botREDACTED_BOT_TOKEN/getMe\")",
       "Bash(brew install:*)",
-      "Bash(/Applications/Python 3.13/Install Certificates.command)",
-      "Bash(git init:*)",
-      "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: Telegram bot with Claude Code SDK integration\n\nFeatures:\n- Telegram bot that listens for messages from @will_bach\n- Forwards messages to Claude Code SDK with auto-approve permissions\n- Voice message support with local Whisper transcription\n- Named session management \\(/new_session, /switch, /sessions, /reset\\)\n- Session persistence to disk \\(survives restarts\\)\n- User tagging in responses\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit:*)",
+      "Bash(git push)"
     ]
   }
 }
