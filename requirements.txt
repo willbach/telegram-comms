@@ -1,0 +1,4 @@
+claude-code-sdk
+python-telegram-bot
+python-dotenv
+openai-whisper
