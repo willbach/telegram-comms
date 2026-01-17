@@ -13,7 +13,6 @@ from claude_client import ClaudeClient, ClaudeConfig
 
 load_dotenv()
 
-ALLOWED_USERNAME = "will_bach"
 ALLOWED_CHAT_ID = int(os.getenv("CHAT_ID", "0"))
 SESSIONS_FILE = Path(__file__).parent / "sessions.json"
 
@@ -68,20 +67,27 @@ whisper_model = whisper.load_model("base")
 print("Whisper model loaded.")
 
 
-async def check_allowed(update: Update) -> bool:
-    """Check if message is from allowed user in allowed chat."""
+async def check_allowed(update: Update, context) -> bool:
+    """Check if message is from an admin in the allowed chat."""
     if not update.message or not update.message.from_user:
         return False
 
     chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
     username = update.message.from_user.username or "no_username"
 
     if chat_id != ALLOWED_CHAT_ID:
         print(f"[DEBUG] Ignoring - wrong chat {chat_id} (expected {ALLOWED_CHAT_ID})")
         return False
 
-    if username != ALLOWED_USERNAME:
-        print(f"[DEBUG] Ignoring - wrong user @{username} (expected @{ALLOWED_USERNAME})")
+    # Check if user is an admin or creator
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            print(f"[DEBUG] Ignoring - @{username} is not an admin (status: {member.status})")
+            return False
+    except Exception as e:
+        print(f"[DEBUG] Error checking admin status: {e}")
         return False
 
     return True
@@ -135,7 +141,7 @@ async def send_to_claude(chat_id: int, text: str, session_name: str = None) -> s
 
 async def handle_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /reset command - clear current session."""
-    if not await check_allowed(update):
+    if not await check_allowed(update, context):
         return
 
     chat_id = update.message.chat_id
@@ -156,7 +162,7 @@ async def handle_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_new_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /new_session <name> <prompt> - create a new named session."""
-    if not await check_allowed(update):
+    if not await check_allowed(update, context):
         return
 
     chat_id = update.message.chat_id
@@ -195,7 +201,7 @@ async def handle_new_session(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_switch_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /switch <name> - switch to a named session."""
-    if not await check_allowed(update):
+    if not await check_allowed(update, context):
         return
 
     chat_id = update.message.chat_id
@@ -238,7 +244,7 @@ async def handle_switch_session(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /sessions - list all sessions."""
-    if not await check_allowed(update):
+    if not await check_allowed(update, context):
         return
 
     chat_id = update.message.chat_id
@@ -273,7 +279,7 @@ async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming text messages."""
-    if not await check_allowed(update):
+    if not await check_allowed(update, context):
         return
 
     text = update.message.text
@@ -304,7 +310,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming voice messages."""
-    if not await check_allowed(update):
+    if not await check_allowed(update, context):
         return
 
     voice = update.message.voice
@@ -380,7 +386,7 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
 
-    print(f"Bot started. Listening for messages from @will_bach in chat {ALLOWED_CHAT_ID}...")
+    print(f"Bot started. Listening for messages from admins in chat {ALLOWED_CHAT_ID}...")
     print("Supported: text messages, voice messages")
     print("Commands: /reset, /new_session, /switch, /sessions")
     print(f"Sessions file: {SESSIONS_FILE}")
