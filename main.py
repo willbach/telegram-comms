@@ -67,6 +67,19 @@ whisper_model = whisper.load_model("base")
 print("Whisper model loaded.")
 
 
+def has_user_mentions(message) -> bool:
+    """Check if message mentions other users (not the bot)."""
+    if not message.entities:
+        return False
+
+    for entity in message.entities:
+        # Check for @username mentions or text_mention (inline user links)
+        if entity.type in ['mention', 'text_mention']:
+            return True
+
+    return False
+
+
 async def check_allowed(update: Update, context) -> bool:
     """Check if message is from an admin in the allowed chat."""
     if not update.message or not update.message.from_user:
@@ -88,6 +101,11 @@ async def check_allowed(update: Update, context) -> bool:
             return False
     except Exception as e:
         print(f"[DEBUG] Error checking admin status: {e}")
+        return False
+
+    # Ignore messages that mention other users
+    if has_user_mentions(update.message):
+        print(f"[DEBUG] Ignoring - message contains user mentions")
         return False
 
     return True
