@@ -1,14 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(*)",
-      "Read(*)",
-      "Write(*)",
-      "Edit(*)",
-      "Glob(*)",
-      "Grep(*)",
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
       "WebSearch",
-      "WebFetch(*)",
+      "WebFetch",
       "mcp__*",
       "Bash(git:*)",
       "Bash(gh:*)",
@@ -19,7 +19,17 @@
       "Bash(python3:*)",
       "Bash(brew install:*)",
       "Bash(git commit:*)",
-      "Bash(git push)"
+      "Bash(git push)",
+      "Bash(git filter-branch --force --tree-filter '\nfind . -type f -name \"\"*.json\"\" -exec sed -i \"\"\"\" \"\"s/8599122792:AAFrV9hG8PIM8wWnvreA5TEJBd2u-BxaT0E/REDACTED_BOT_TOKEN/g\"\" {} \\\\;\n' --prune-empty HEAD)",
+      "Bash(git reflog:*)",
+      "Bash(git gc:*)",
+      "Bash(git fsck:*)",
+      "Bash(git prune:*)",
+      "Bash(git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(git show-ref:*)",
+      "Bash(git update-ref:*)",
+      "Bash(pkill:*)"
     ]
   }
 }
