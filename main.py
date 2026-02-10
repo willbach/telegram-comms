@@ -13,7 +13,48 @@ from claude_client import ClaudeClient, ClaudeConfig
 
 load_dotenv()
 
-ALLOWED_CHAT_ID = int(os.getenv("CHAT_ID", "0"))
+MAX_MESSAGE_LENGTH = 4096
+
+
+def split_message(text: str, max_len: int = MAX_MESSAGE_LENGTH) -> list[str]:
+    """Split a message into chunks that fit within Telegram's character limit.
+
+    Tries to split on double newlines, then single newlines, then spaces.
+    """
+    if len(text) <= max_len:
+        return [text]
+
+    chunks = []
+    while text:
+        if len(text) <= max_len:
+            chunks.append(text)
+            break
+
+        # Try to find a good split point
+        split_at = -1
+        for sep in ["\n\n", "\n", " "]:
+            idx = text.rfind(sep, 0, max_len)
+            if idx != -1:
+                split_at = idx + len(sep)
+                break
+
+        if split_at == -1:
+            # No good split point, hard cut
+            split_at = max_len
+
+        chunks.append(text[:split_at].rstrip())
+        text = text[split_at:].lstrip()
+
+    return chunks
+
+# Support multiple chat IDs (comma-separated in env var)
+def parse_chat_ids(env_value: str) -> set[int]:
+    """Parse comma-separated chat IDs from environment variable."""
+    if not env_value:
+        return set()
+    return {int(cid.strip()) for cid in env_value.split(",") if cid.strip()}
+
+ALLOWED_CHAT_IDS = parse_chat_ids(os.getenv("CHAT_IDS", os.getenv("CHAT_ID", "")))
 SESSIONS_FILE = Path(__file__).parent / "sessions.json"
 
 # Configure Claude with auto-approve for all tool uses
@@ -67,48 +108,62 @@ whisper_model = whisper.load_model("base")
 print("Whisper model loaded.")
 
 
-def has_user_mentions(message) -> bool:
-    """Check if message mentions other users (not the bot)."""
-    if not message.entities:
-        return False
+def get_bot_mention(message, bot_username: str) -> tuple[bool, str]:
+    """Check if bot is mentioned and return (is_mentioned, text_without_mention)."""
+    if not message.entities or not message.text:
+        return False, message.text or ""
+
+    text = message.text
+    bot_mention = f"@{bot_username}"
 
     for entity in message.entities:
-        # Check for @username mentions or text_mention (inline user links)
-        if entity.type in ['mention', 'text_mention']:
-            return True
+        if entity.type == 'mention':
+            mention_text = text[entity.offset:entity.offset + entity.length]
+            if mention_text.lower() == bot_mention.lower():
+                # Remove the bot mention from the text
+                text_without_mention = (
+                    text[:entity.offset] + text[entity.offset + entity.length:]
+                ).strip()
+                return True, text_without_mention
 
-    return False
+    return False, text
 
 
-async def check_allowed(update: Update, context) -> bool:
-    """Check if message is from an admin in the allowed chat."""
+async def check_allowed(update: Update, context) -> tuple[bool, str]:
+    """Check if message is from an admin in the allowed chat and tags the bot.
+
+    Returns (is_allowed, message_text) where message_text has the bot mention removed.
+    """
     if not update.message or not update.message.from_user:
-        return False
+        return False, ""
 
     chat_id = update.message.chat_id
     user_id = update.message.from_user.id
     username = update.message.from_user.username or "no_username"
 
-    if chat_id != ALLOWED_CHAT_ID:
-        print(f"[DEBUG] Ignoring - wrong chat {chat_id} (expected {ALLOWED_CHAT_ID})")
-        return False
+    if chat_id not in ALLOWED_CHAT_IDS:
+        print(f"[DEBUG] Ignoring - chat {chat_id} not in allowed list")
+        return False, ""
 
     # Check if user is an admin or creator
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status not in ['administrator', 'creator']:
             print(f"[DEBUG] Ignoring - @{username} is not an admin (status: {member.status})")
-            return False
+            return False, ""
     except Exception as e:
         print(f"[DEBUG] Error checking admin status: {e}")
-        return False
+        return False, ""
 
-    # Ignore messages that mention other users
-    if has_user_mentions(update.message):
-        print(f"[DEBUG] Ignoring - message contains user mentions")
-        return False
+    # Check if bot is mentioned - required for the bot to respond
+    bot_username = context.bot.username
+    is_mentioned, text_without_mention = get_bot_mention(update.message, bot_username)
 
-    return True
+    if not is_mentioned:
+        print(f"[DEBUG] Ignoring - bot not mentioned")
+        return False, ""
+
+    return True, text_without_mention
 
 
 def get_user_mention(update: Update) -> str:
@@ -159,7 +214,8 @@ async def send_to_claude(chat_id: int, text: str, session_name: str = None) -> s
 
 async def handle_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /reset command - clear current session."""
-    if not await check_allowed(update, context):
+    is_allowed, _ = await check_allowed(update, context)
+    if not is_allowed:
         return
 
     chat_id = update.message.chat_id
@@ -180,7 +236,8 @@ async def handle_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_new_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /new_session <name> <prompt> - create a new named session."""
-    if not await check_allowed(update, context):
+    is_allowed, _ = await check_allowed(update, context)
+    if not is_allowed:
         return
 
     chat_id = update.message.chat_id
@@ -211,7 +268,11 @@ async def handle_new_session(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         response = await send_to_claude(chat_id, prompt, session_name=session_name)
         print(f"Claude response: {response[:100]}...")
-        await ack_message.edit_text(f"{user_mention} 📌 Session: {session_name}\n\n{response}")
+        full_response = f"{user_mention} 📌 Session: {session_name}\n\n{response}"
+        chunks = split_message(full_response)
+        await ack_message.edit_text(chunks[0])
+        for chunk in chunks[1:]:
+            await update.message.reply_text(chunk)
     except Exception as e:
         print(f"Error: {e}")
         await ack_message.edit_text(f"{user_mention} Error: {e}")
@@ -219,7 +280,8 @@ async def handle_new_session(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_switch_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /switch <name> - switch to a named session."""
-    if not await check_allowed(update, context):
+    is_allowed, _ = await check_allowed(update, context)
+    if not is_allowed:
         return
 
     chat_id = update.message.chat_id
@@ -262,7 +324,8 @@ async def handle_switch_session(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /sessions - list all sessions."""
-    if not await check_allowed(update, context):
+    is_allowed, _ = await check_allowed(update, context)
+    if not is_allowed:
         return
 
     chat_id = update.message.chat_id
@@ -297,10 +360,10 @@ async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming text messages."""
-    if not await check_allowed(update, context):
+    is_allowed, text = await check_allowed(update, context)
+    if not is_allowed:
         return
 
-    text = update.message.text
     if not text:
         return
 
@@ -320,15 +383,43 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         # Add session indicator if using named session
         session_prefix = f"📌 {session_name}\n\n" if session_name else ""
-        await ack_message.edit_text(f"{user_mention} {session_prefix}{response}")
+        full_response = f"{user_mention} {session_prefix}{response}"
+        chunks = split_message(full_response)
+        await ack_message.edit_text(chunks[0])
+        for chunk in chunks[1:]:
+            await update.message.reply_text(chunk)
     except Exception as e:
         print(f"Error getting Claude response: {e}")
         await ack_message.edit_text(f"{user_mention} Error: {e}")
 
 
+async def check_admin_allowed(update: Update, context) -> bool:
+    """Check if message is from an admin in the allowed chat (no mention required)."""
+    if not update.message or not update.message.from_user:
+        return False
+
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+    username = update.message.from_user.username or "no_username"
+
+    if chat_id not in ALLOWED_CHAT_IDS:
+        return False
+
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            print(f"[DEBUG] Voice - @{username} is not an admin")
+            return False
+    except Exception as e:
+        print(f"[DEBUG] Error checking admin status: {e}")
+        return False
+
+    return True
+
+
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming voice messages."""
-    if not await check_allowed(update, context):
+    """Handle incoming voice messages (no mention required since impossible in voice)."""
+    if not await check_admin_allowed(update, context):
         return
 
     voice = update.message.voice
@@ -374,7 +465,11 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # Add session indicator if using named session
         session_prefix = f"📌 {session_name}\n\n" if session_name else ""
-        await ack_message.edit_text(f"{user_mention} 🎤 \"{transcription}\"\n\n{session_prefix}{response}")
+        full_response = f"{user_mention} 🎤 \"{transcription}\"\n\n{session_prefix}{response}"
+        chunks = split_message(full_response)
+        await ack_message.edit_text(chunks[0])
+        for chunk in chunks[1:]:
+            await update.message.reply_text(chunk)
 
     except Exception as e:
         print(f"Error processing voice message: {e}")
@@ -404,7 +499,7 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
 
-    print(f"Bot started. Listening for messages from admins in chat {ALLOWED_CHAT_ID}...")
+    print(f"Bot started. Listening for messages from admins in chats: {ALLOWED_CHAT_IDS}")
     print("Supported: text messages, voice messages")
     print("Commands: /reset, /new_session, /switch, /sessions")
     print(f"Sessions file: {SESSIONS_FILE}")
